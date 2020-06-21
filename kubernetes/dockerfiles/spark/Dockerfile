@@ -1,32 +1,4 @@
-#
-# Licensed to the Apache Software Foundation (ASF) under one or more
-# contributor license agreements.  See the NOTICE file distributed with
-# this work for additional information regarding copyright ownership.
-# The ASF licenses this file to You under the Apache License, Version 2.0
-# (the "License"); you may not use this file except in compliance with
-# the License.  You may obtain a copy of the License at
-#
-#    http://www.apache.org/licenses/LICENSE-2.0
-#
-# Unless required by applicable law or agreed to in writing, software
-# distributed under the License is distributed on an "AS IS" BASIS,
-# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-# See the License for the specific language governing permissions and
-# limitations under the License.
-#
-
 FROM openjdk:8-jdk-slim
-
-ARG spark_jars=jars
-ARG img_path=kubernetes/dockerfiles
-ARG k8s_tests=kubernetes/tests
-
-# Before building the docker image, first build and make a Spark distribution following
-# the instructions in http://spark.apache.org/docs/latest/building-spark.html.
-# If this docker file is being used in the context of building your images from a Spark
-# distribution, the docker build command should be invoked from the top level directory
-# of the Spark distribution. E.g.:
-# docker build -t spark:latest -f kubernetes/dockerfiles/spark/Dockerfile .
 
 RUN set -ex && \
     apt-get update && \
@@ -41,15 +13,41 @@ RUN set -ex && \
     chgrp root /etc/passwd && chmod ug+rw /etc/passwd && \
     rm -rf /var/cache/apt/*
 
-COPY ${spark_jars} /opt/spark/jars
+COPY jars /opt/spark/jars
 COPY bin /opt/spark/bin
 COPY sbin /opt/spark/sbin
-COPY ${img_path}/spark/entrypoint.sh /opt/
+COPY entrypoint.sh /opt/
 COPY examples /opt/spark/examples
-COPY ${k8s_tests} /opt/spark/tests
+COPY tests /opt/spark/tests
 COPY data /opt/spark/data
 
 ENV SPARK_HOME /opt/spark
+
+WORKDIR /
+RUN mkdir ${SPARK_HOME}/python
+# TODO: Investigate running both pip and pip3 via virtualenvs
+RUN apt install -y python python-pip && \
+    apt install -y make build-essential libssl-dev zlib1g-dev \
+    libbz2-dev libreadline-dev libsqlite3-dev wget curl llvm \
+    libncurses5-dev libncursesw5-dev xz-utils tk-dev && \
+    wget https://www.python.org/ftp/python/3.6.9/Python-3.6.9.tgz && \
+    tar xvf Python-3.6.9.tgz && \
+    cd Python-3.6.9 && \
+    ./configure --enable-optimizations --without-ensurepip && \
+    make -j8 && \
+    make altinstall && \
+    cp python /usr/bin/python3 && \
+    curl https://bootstrap.pypa.io/get-pip.py | python3 && \
+    # We remove ensurepip since it adds no functionality since pip is
+    # installed on the image and it just takes up 1.6MB on the image
+    rm -r /usr/lib/python*/ensurepip && \
+    pip install --upgrade pip setuptools && \
+    # You may install with python3 packages by using pip3.6
+    # Removed the .cache to save space
+    rm -r /root/.cache && rm -rf /var/cache/apt/*
+
+COPY python/lib ${SPARK_HOME}/python/lib
+ENV PYTHONPATH ${SPARK_HOME}/python/lib/pyspark.zip:${SPARK_HOME}/python/lib/py4j-*.zip
 
 WORKDIR /opt/spark/work-dir
 
